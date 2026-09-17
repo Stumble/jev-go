@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -221,18 +223,8 @@ func (c *Client) SystemOne(
 	if result.Answers == nil || result.Model == "" {
 		return Response{}, errors.New("jev: evaluation response is missing model or answers")
 	}
-	for _, name := range sortedQuestionNames(request.Questions) {
-		question := request.Questions[name]
-		answer, ok := result.Answers[name]
-		if !ok || answer.Type != question.Type {
-			return Response{}, fmt.Errorf(
-				"jev: evaluation response is missing or mismatches question %q",
-				name,
-			)
-		}
-	}
-	if len(result.Answers) != len(request.Questions) {
-		return Response{}, errors.New("jev: evaluation response contains unexpected answers")
+	if err := validateAnswers(request.Questions, result.Answers, result.Rounding); err != nil {
+		return Response{}, err
 	}
 	result.RequestID = requestID
 	return result, nil
@@ -292,6 +284,11 @@ func validateQuestions(questions map[string]Question) error {
 			if v.Len() > 255 {
 				return fmt.Errorf("jev: choice question %q exceeds 255 options", name)
 			}
+			for _, key := range v.MapKeys() {
+				if strings.TrimSpace(key.String()) == "" {
+					return fmt.Errorf("jev: choice question %q has a blank option", name)
+				}
+			}
 		case QuestionScore:
 			v := reflect.ValueOf(q.Criteria)
 			if !v.IsValid() || (v.Kind() != reflect.Slice && v.Kind() != reflect.Array) ||
@@ -315,6 +312,139 @@ func sortedQuestionNames(questions map[string]Question) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func validateAnswers(
+	questions map[string]Question,
+	answers map[string]Answer,
+	rounding *Rounding,
+) error {
+	for _, name := range sortedQuestionNames(questions) {
+		question := questions[name]
+		answer, ok := answers[name]
+		if !ok || answer.Type != question.Type {
+			return fmt.Errorf("jev: evaluation response is missing or mismatches question %q", name)
+		}
+		if err := validateAnswer(question, answer, rounding); err != nil {
+			return fmt.Errorf("jev: invalid answer %q: %w", name, err)
+		}
+	}
+	if len(answers) != len(questions) {
+		return errors.New("jev: evaluation response contains unexpected answers")
+	}
+	return nil
+}
+
+func validateAnswer(question Question, answer Answer, rounding *Rounding) error {
+	switch question.Type {
+	case QuestionNoul:
+		return nil
+	case QuestionChoice:
+		criteria := reflect.ValueOf(question.Criteria)
+		choice := reflect.ValueOf(answer.Choice).Convert(criteria.Type().Key())
+		if !criteria.MapIndex(choice).IsValid() {
+			return fmt.Errorf("choice %q is not one of the requested options", answer.Choice)
+		}
+		if len(answer.Probabilities) == 0 {
+			return nil
+		}
+		if len(answer.Probabilities) != criteria.Len() {
+			return errors.New("choice probabilities do not cover every requested option")
+		}
+		for label := range answer.Probabilities {
+			key := reflect.ValueOf(label).Convert(criteria.Type().Key())
+			if !criteria.MapIndex(key).IsValid() {
+				return fmt.Errorf("choice probability %q is not a requested option", label)
+			}
+		}
+		return validateDistribution(answer.Probabilities, rounding)
+	case QuestionScore:
+		levels := reflect.ValueOf(question.Criteria).Len()
+		if answer.Score < 0 || answer.Score > float64(levels-1) {
+			return errors.New("score is outside the requested levels")
+		}
+		if len(answer.Probabilities) > 0 {
+			if len(answer.Probabilities) != levels {
+				return errors.New("score probabilities do not cover every requested level")
+			}
+			for i := 0; i < levels; i++ {
+				if _, ok := answer.Probabilities[strconv.Itoa(i)]; !ok {
+					return fmt.Errorf("score probabilities are missing level %d", i)
+				}
+			}
+			if err := validateDistribution(answer.Probabilities, rounding); err != nil {
+				return err
+			}
+		}
+		if len(answer.Legend) > 0 {
+			if len(answer.Legend) != levels {
+				return errors.New("score legend does not cover every requested level")
+			}
+			for i := 0; i < levels; i++ {
+				label := strconv.Itoa(i)
+				actual, ok := answer.Legend[label]
+				if !ok {
+					return fmt.Errorf("score legend is missing level %d", i)
+				}
+				expected, err := json.Marshal(
+					reflect.ValueOf(question.Criteria).Index(i).Interface(),
+				)
+				if err != nil {
+					return fmt.Errorf("encode requested score level %d: %w", i, err)
+				}
+				if !equalJSON(actual, expected) {
+					return fmt.Errorf("score legend level %d does not match the request", i)
+				}
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported question type %q", question.Type)
+	}
+}
+
+func equalJSON(left, right []byte) bool {
+	leftValue, leftErr := decodeComparableJSON(left)
+	rightValue, rightErr := decodeComparableJSON(right)
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
+}
+
+func decodeComparableJSON(data []byte) (any, error) {
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("multiple JSON values")
+		}
+		return nil, err
+	}
+	return value, nil
+}
+
+func validateDistribution(probabilities map[string]float64, rounding *Rounding) error {
+	total := 0.0
+	for _, value := range probabilities {
+		total += value
+	}
+	tolerance := 1e-6
+	if rounding != nil && rounding.ProbabilityDecimals != nil {
+		decimals := *rounding.ProbabilityDecimals
+		if decimals >= 0 && decimals <= 15 {
+			tolerance = float64(len(probabilities))*0.5*math.Pow10(-decimals) + 1e-12
+		}
+	}
+	if math.Abs(total-1) > tolerance {
+		return fmt.Errorf("probabilities sum to %g instead of 1", total)
+	}
+	return nil
 }
 
 func (c *Client) do(

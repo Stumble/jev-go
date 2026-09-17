@@ -22,6 +22,7 @@ jobs:
           go-version: ${{ matrix.go }}
       - run: go test -race ./...
       - run: go vet ./...
+      - run: make coverage
 
   lint:
     runs-on: ubuntu-latest

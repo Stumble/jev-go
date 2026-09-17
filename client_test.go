@@ -73,7 +73,7 @@ func TestSystemOne(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(
 			w,
-			`{"model":"jev-1.13.0","answers":{"urgent":{"type":"noul","noul":0.92},"category":{"type":"choice","choice":"billing","confidence":0.81,"probabilities":{"billing":0.9,"other":0.1}},"severity":{"type":"score","score":1.6,"confidence":0.8,"legend":{"0":"low","1":"high"},"probabilities":{"0":0.4,"1":0.6}}},"usage":{"input_tokens":12,"output_tokens":3}}`,
+			`{"model":"jev-1.13.0","answers":{"urgent":{"type":"noul","noul":0.92},"category":{"type":"choice","choice":"billing","confidence":0.81,"probabilities":{"billing":0.9,"other":0.1}},"severity":{"type":"score","score":0.6,"confidence":0.8,"legend":{"0":"low","1":"high"},"probabilities":{"0":0.4,"1":0.6}}},"usage":{"input_tokens":12,"output_tokens":3}}`,
 		)
 	}))
 	defer server.Close()
@@ -98,7 +98,7 @@ func TestSystemOne(t *testing.T) {
 	}
 	if response.Answers["urgent"].Noul != 0.92 ||
 		response.Answers["category"].Choice != "billing" ||
-		response.Answers["severity"].Score != 1.6 {
+		response.Answers["severity"].Score != 0.6 {
 		t.Errorf("unexpected answers: %+v", response.Answers)
 	}
 	if string(response.Answers["severity"].Legend["0"]) != `"low"` {
@@ -280,9 +280,10 @@ func TestRedirectCannotForwardAPIKey(t *testing.T) {
 
 func TestTimeoutRetriesAndCallOverride(t *testing.T) {
 	var attempts atomic.Int32
+	releaseFirst := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if attempts.Add(1) == 1 {
-			time.Sleep(40 * time.Millisecond)
+			<-releaseFirst
 			return
 		}
 		_, _ = io.WriteString(
@@ -291,6 +292,7 @@ func TestTimeoutRetriesAndCallOverride(t *testing.T) {
 		)
 	}))
 	defer server.Close()
+	defer close(releaseFirst)
 	client, err := jev.NewClient(jev.Config{
 		APIKey: "test-key", BaseURL: server.URL,
 		Retry: &jev.RetryPolicy{
@@ -306,7 +308,7 @@ func TestTimeoutRetriesAndCallOverride(t *testing.T) {
 		context.Background(),
 		jev.Request{Questions: map[string]jev.Question{"x": jev.Noul("x")}},
 		jev.CallOptions{
-			Timeout: 5 * time.Millisecond,
+			Timeout: 100 * time.Millisecond,
 			Retry:   &jev.RetryPolicy{MaxRetries: 1},
 		},
 	)
@@ -331,6 +333,11 @@ func TestValidateBeforeSending(t *testing.T) {
 		{Questions: map[string]jev.Question{"x": jev.Score("score", []string{"one"})}},
 		{Questions: map[string]jev.Question{"x": jev.Score("score", make([]string, 11))}},
 		{Questions: map[string]jev.Question{"x": jev.Choice("choose", map[string]string{})}},
+		{
+			Questions: map[string]jev.Question{
+				"x": jev.Choice("choose", map[string]string{" ": "blank"}),
+			},
+		},
 		{Questions: map[string]jev.Question{"x": jev.Choice("choose", tooManyOptions)}},
 		{Questions: map[string]jev.Question{"x": {Type: "unknown"}}},
 		{Questions: map[string]jev.Question{" ": jev.Noul("hi")}},
@@ -487,6 +494,54 @@ func TestMalformedAnswersAreRejected(t *testing.T) {
 			`{"type":"choice","choice":"a","confidence":1,"probabilities":{"a":1}}`,
 			true,
 		},
+		{
+			"choice outside requested options",
+			jev.Choice("x", map[string]string{"a": "a"}),
+			`{"type":"choice","choice":"b","confidence":1,"probabilities":{"b":1}}`,
+			true,
+		},
+		{
+			"choice probabilities incomplete",
+			jev.Choice("x", map[string]string{"a": "a", "b": "b"}),
+			`{"type":"choice","choice":"a","confidence":1,"probabilities":{"a":1}}`,
+			true,
+		},
+		{
+			"choice probabilities do not sum to one",
+			jev.Choice("x", map[string]string{"a": "a", "b": "b"}),
+			`{"type":"choice","choice":"a","confidence":1,"probabilities":{"a":0.2,"b":0.2}}`,
+			true,
+		},
+		{
+			"score outside requested levels",
+			jev.Score("x", []string{"low", "high"}),
+			`{"type":"score","score":2,"confidence":1,"legend":{"0":"low","1":"high"},"probabilities":{"0":0,"1":1}}`,
+			true,
+		},
+		{
+			"score probabilities incomplete",
+			jev.Score("x", []string{"low", "high"}),
+			`{"type":"score","score":0,"confidence":1,"legend":{"0":"low","1":"high"},"probabilities":{"0":1}}`,
+			true,
+		},
+		{
+			"score legend incomplete",
+			jev.Score("x", []string{"low", "high"}),
+			`{"type":"score","score":0,"confidence":1,"legend":{"0":"low"},"probabilities":{"0":1,"1":0}}`,
+			true,
+		},
+		{
+			"score legend mismatch",
+			jev.Score("x", []string{"low", "high"}),
+			`{"type":"score","score":0,"confidence":1,"legend":{"0":"wrong","1":"high"},"probabilities":{"0":1,"1":0}}`,
+			true,
+		},
+		{
+			"score legend large integer mismatch",
+			jev.Score("x", []any{json.Number("9007199254740992"), "high"}),
+			`{"type":"score","score":0,"confidence":1,"legend":{"0":9007199254740993,"1":"high"},"probabilities":{"0":1,"1":0}}`,
+			true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -514,5 +569,126 @@ func TestMalformedAnswersAreRejected(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCallValidation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("invalid call reached the server")
+	}))
+	defer server.Close()
+	client := newClient(t, server, nil)
+	request := jev.Request{Questions: map[string]jev.Question{"x": jev.Noul("x")}}
+	var nilClient *jev.Client
+	if _, err := nilClient.Ask(context.Background(), request); err == nil {
+		t.Fatal("expected nil client to fail")
+	}
+	if _, err := nilClient.ListModels(context.Background()); err == nil {
+		t.Fatal("expected nil client model listing to fail")
+	}
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		options []jev.CallOptions
+	}{
+		{"nil context", nil, nil},
+		{"multiple options", context.Background(), []jev.CallOptions{{}, {}}},
+		{"negative timeout", context.Background(), []jev.CallOptions{{Timeout: -1}}},
+		{
+			"invalid retry",
+			context.Background(),
+			[]jev.CallOptions{{Retry: &jev.RetryPolicy{MaxRetries: -1}}},
+		},
+		{
+			"reserved header",
+			context.Background(),
+			[]jev.CallOptions{{Headers: http.Header{"Accept": {"text/plain"}}}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := client.Ask(test.ctx, request, test.options...); err == nil {
+				t.Fatal("expected call to fail")
+			}
+		})
+	}
+}
+
+func TestResponseEnvelopeValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"invalid JSON", `not-json`},
+		{"missing model", `{"answers":{"x":{"type":"noul","noul":0.5}}}`},
+		{"missing answers", `{"model":"jev-latest"}`},
+		{
+			"missing named answer",
+			`{"model":"jev-latest","answers":{"other":{"type":"noul","noul":0.5}}}`,
+		},
+		{
+			"unexpected answer",
+			`{"model":"jev-latest","answers":{"x":{"type":"noul","noul":0.5},"other":{"type":"noul","noul":0.5}}}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					_, _ = io.WriteString(w, test.body)
+				}),
+			)
+			defer server.Close()
+			client := newClient(t, server, &jev.RetryPolicy{MaxRetries: 0})
+			if _, err := client.Ask(
+				context.Background(),
+				jev.Request{Questions: map[string]jev.Question{"x": jev.Noul("x")}},
+			); err == nil {
+				t.Fatal("expected response validation to fail")
+			}
+		})
+	}
+}
+
+func TestModelResponseValidation(t *testing.T) {
+	for _, body := range []string{`not-json`, `{}`} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, body)
+		}))
+		client := newClient(t, server, &jev.RetryPolicy{MaxRetries: 0})
+		if _, err := client.ListModels(context.Background()); err == nil {
+			t.Errorf("expected model response %q to fail", body)
+		}
+		server.Close()
+	}
+}
+
+func TestResponseSizeLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("x", (4<<20)+1))
+	}))
+	defer server.Close()
+	client := newClient(t, server, &jev.RetryPolicy{MaxRetries: 0})
+	_, err := client.Ask(
+		context.Background(),
+		jev.Request{Questions: map[string]jev.Question{"x": jev.Noul("x")}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "response exceeds") {
+		t.Fatalf("size error: %v", err)
+	}
+}
+
+func TestClientConfigurationValidation(t *testing.T) {
+	tests := []jev.Config{
+		{APIKey: "line\nbreak"},
+		{APIKey: "key", Timeout: -1},
+		{APIKey: "key", BaseURL: "https://user@example.com"},
+		{APIKey: "key", BaseURL: "https://example.com?query=true"},
+		{Provider: jev.ProviderVercel, APIKey: "key", BaseURL: "https://api.typesafe.ai"},
+	}
+	for _, config := range tests {
+		if _, err := jev.NewClient(config); err == nil {
+			t.Errorf("expected config to fail: %+v", config)
+		}
 	}
 }

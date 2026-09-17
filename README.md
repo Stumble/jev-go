@@ -133,6 +133,6 @@ Vercel documents Evaluation as an AI SDK 7 feature rather than an OpenAI-compati
 
 ## Development
 
-This module has no runtime dependencies. Run `make lint-fix` to apply the Alva-inspired golangci-lint v2 configuration, then `make ci` to check formatting, lint and race tests. CI tests Go 1.22 and stable Go; HTTP contract tests use local servers and do not need an API key or contact TypeSafe AI.
+This module has no runtime dependencies. Run `make lint-fix` to apply the Alva-inspired golangci-lint v2 configuration, then `make ci` to check formatting, lint, race tests, and the enforced 85% total statement-coverage floor. CI tests Go 1.22 and stable Go; HTTP contract tests use local servers and do not need an API key or contact TypeSafe AI.
 
 API reference: [JavaScript SDK](https://docs.typesafe.ai/sdk/javascript), [HTTP API](https://docs.typesafe.ai/api), [model listing](https://docs.typesafe.ai/models).

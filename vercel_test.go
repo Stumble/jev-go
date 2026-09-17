@@ -145,7 +145,22 @@ func TestVercelProviderRejectsMalformedAnswers(t *testing.T) {
 			jev.Choice("x", map[string]string{"a": "a"}),
 			`{"type":"choice","choice":"b","probabilities":{"a":1}}`,
 		},
+		{
+			"choice invalid probability",
+			jev.Choice("x", map[string]string{"a": "a"}),
+			`{"type":"choice","choice":"a","probabilities":{"a":2}}`,
+		},
+		{
+			"choice probabilities do not sum to one",
+			jev.Choice("x", map[string]string{"a": "a", "b": "b"}),
+			`{"type":"choice","choice":"a","probabilities":{"a":0.2,"b":0.2}}`,
+		},
 		{"score outside levels", jev.Score("x", []string{"a", "b"}), `{"type":"score","score":2}`},
+		{
+			"score invalid probability",
+			jev.Score("x", []string{"a", "b"}),
+			`{"type":"score","score":0,"probabilities":{"0":-1,"1":1}}`,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -167,6 +182,45 @@ func TestVercelProviderRejectsMalformedAnswers(t *testing.T) {
 				Questions: map[string]jev.Question{"x": test.question},
 			}); err == nil {
 				t.Fatal("expected malformed answer to fail")
+			}
+		})
+	}
+}
+
+func TestVercelEnvelopeValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"invalid JSON", `not-json`},
+		{"missing answers", `{}`},
+		{"missing named answer", `{"answers":{"other":{"type":"boolean","probability":0.5}}}`},
+		{
+			"unexpected answer",
+			`{"answers":{"x":{"type":"boolean","probability":0.5},"other":{"type":"boolean","probability":0.5}}}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					_, _ = io.WriteString(w, test.body)
+				}),
+			)
+			defer server.Close()
+			client, err := jev.NewClient(jev.Config{
+				Provider: jev.ProviderVercel,
+				APIKey:   "test",
+				BaseURL:  server.URL,
+				Retry:    &jev.RetryPolicy{MaxRetries: 0},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.Ask(context.Background(), jev.Request{
+				Questions: map[string]jev.Question{"x": jev.Noul("x")},
+			}); err == nil {
+				t.Fatal("expected response validation to fail")
 			}
 		})
 	}
@@ -201,6 +255,31 @@ func TestVercelProviderAcceptsOptionalProbabilities(t *testing.T) {
 		result.Answers["score"].Probabilities != nil ||
 		string(result.Answers["score"].Legend["0"]) != `"low"` {
 		t.Fatalf("optional response fields: %+v", result.Answers)
+	}
+}
+
+func TestVercelProviderAcceptsRoundedDistribution(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{
+			"answers":{"choice":{"type":"choice","choice":"a","probabilities":{"a":0.33,"b":0.33,"c":0.33}}},
+			"rounding":{"probabilityDecimals":2}
+		}`)
+	}))
+	defer server.Close()
+	client, err := jev.NewClient(jev.Config{
+		Provider: jev.ProviderVercel,
+		APIKey:   "test",
+		BaseURL:  server.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Ask(context.Background(), jev.Request{
+		Questions: map[string]jev.Question{
+			"choice": jev.Choice("choose", map[string]string{"a": "a", "b": "b", "c": "c"}),
+		},
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
