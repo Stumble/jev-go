@@ -1,0 +1,51 @@
+version: "2"
+
+run:
+  timeout: 5m
+  go: '1.22'
+
+linters:
+  enable:
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - copyloopvar
+    - dogsled
+    - durationcheck
+    - goconst
+    - gosec
+    - mirror
+    - misspell
+    - prealloc
+    - reassign
+    - unconvert
+    - usetesting
+    - whitespace
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+  settings:
+    misspell:
+      locale: US
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/stumble/jev-go)
+      custom-order: true

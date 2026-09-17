@@ -6,7 +6,12 @@ import (
 )
 
 func parseAPIError(status int, requestID string, data []byte) *APIError {
-	result := &APIError{StatusCode: status, RequestID: requestID, Message: http.StatusText(status), Body: data}
+	result := &APIError{
+		StatusCode: status,
+		RequestID:  requestID,
+		Message:    http.StatusText(status),
+		Body:       data,
+	}
 	var envelope struct {
 		Error   json.RawMessage `json:"error"`
 		Message string          `json:"message"`

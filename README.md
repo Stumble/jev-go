@@ -19,12 +19,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	jev "github.com/stumble/jev-go"
 )
 
 func main() {
-	client, err := jev.NewClient(jev.Config{}) // reads TYPESAFE_API_KEY
+	client, err := jev.NewClient(jev.Config{APIKey: os.Getenv("TYPESAFE_API_KEY")})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -52,7 +53,9 @@ func main() {
 }
 ```
 
-`SystemOne(ctx, request)` is the canonical method matching the JavaScript SDK's `systemOne`; `Ask` is an alias. Requests can mix any number of named Noul, Choice, and Score questions. Answers are keyed by those names; check an answer's `Type` before interpreting its type-specific fields. `Response` also includes the model, token usage, and an optional HTTP request ID. State, instructions, and criteria accept JSON-compatible structured values. `ListModels(ctx)` returns the models available to the account.
+`SystemOne(ctx, request)` is the canonical method matching the JavaScript SDK's `systemOne`; `Ask` is an alias. Requests can mix any number of named Noul, Choice, and Score questions. Answers are keyed by those names; check an answer's `Type` before interpreting its type-specific fields. Missing or malformed answer fields are reported as errors rather than mistaken for a valid zero. `Response` also includes the model, token usage, and an optional HTTP request ID. State, instructions, and criteria accept JSON-compatible structured values. `ListModels(ctx)` returns the models available to the account.
+
+Named questions and Choice options use maps because the HTTP protocol uses JSON objects keyed by name. Go's `encoding/json` sorts map keys when encoding, and their order has no meaning for these questions. Score levels use a slice because their order defines the rubric. Invalid questions are checked in sorted name order, so the first validation error is repeatable. Don't mutate input maps concurrently with a request.
 
 The JavaScript SDK infers answer types at compile time from its TypeScript question map. Go does not infer heterogeneous map values that way, so this client uses an explicit answer discriminator and ordinary Go fields instead. For structured Score legends, `Answer.Legend` uses `json.RawMessage` to preserve each level's JSON value.
 
@@ -60,7 +63,7 @@ The JavaScript SDK infers answer types at compile time from its TypeScript quest
 
 ```go
 client, err := jev.NewClient(jev.Config{
-	APIKey:       "...", // optional when TYPESAFE_API_KEY is set
+	APIKey:       "...", // supplied by your application
 	DefaultModel: "jev-latest",
 	Timeout:      10 * time.Second, // per attempt
 	Retry:        &jev.RetryPolicy{MaxRetries: 2},
@@ -79,12 +82,16 @@ if errors.As(err, &apiErr) {
 _ = result
 ```
 
-Explicit configuration wins over environment variables (`TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL`), which win over the defaults (`https://api.typesafe.ai` and `jev-latest`). A custom `*http.Client` and additional request headers can be supplied through `Config`; per-call headers and timeout can be supplied through `CallOptions`. The client owns Authorization, Accept, Content-Type, and retry-count headers, and does not follow redirects with the bearer token. Non-HTTPS custom endpoints are allowed only on loopback for safe local testing.
+By default the SDK never reads environment variables. Pass the API key and other settings from your application's configuration, or explicitly use `jev.Config{ReadFromEnvironment: true}` to enable `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, and `TYPESAFE_DEFAULT_MODEL` as fallbacks. Explicit values win over environment variables; defaults are `https://api.typesafe.ai` and `jev-latest`. A custom `*http.Client` and additional request headers can be supplied through `Config`; per-call headers and timeout can be supplied through `CallOptions`. The client owns Authorization, Accept, Content-Type, and retry-count headers, and does not follow redirects with the bearer token. Non-HTTPS custom endpoints are allowed only on loopback for safe local testing.
 
 The default retry policy makes up to two retries for connection failures, per-attempt timeouts, and HTTP 408, 429, and 5xx responses (including 529). It uses jittered exponential backoff and honors `Retry-After` and `Retry-After-Ms` up to one minute. Set `Retry: &jev.RetryPolicy{MaxRetries: 0}` to disable retries. Cancellation of the caller's context interrupts both requests and pending backoff; use a context deadline to bound the whole operation.
 
+## Vercel AI Gateway
+
+Vercel lists Jev as an evaluation model under `typesafe-ai/jev`, but [Gateway Evaluation is currently available only through AI SDK 7](https://vercel.com/docs/ai-gateway/modalities/evaluation). It is **not** available through the documented REST-compatible Gateway endpoints, and it uses a different Boolean answer shape from TypeSafe's direct Noul response. Therefore, a Vercel Gateway key or Gateway `BaseURL` cannot be used with this direct TypeSafe client. Do not send a Gateway key to `api.typesafe.ai`. Supporting Gateway evaluation in Go would require Vercel to publish a stable HTTP contract or a separate service running their AI SDK; this package does not rely on private Gateway endpoints.
+
 ## Development
 
-This module has no third-party dependencies. Run `go test -race ./...` and `go vet ./...` locally. HTTP contract tests use local servers and do not need an API key or contact TypeSafe AI.
+This module has no runtime dependencies. Run `make lint-fix` to apply the Alva-inspired golangci-lint v2 configuration, then `make ci` to check formatting, lint and race tests. CI tests Go 1.22 and stable Go; HTTP contract tests use local servers and do not need an API key or contact TypeSafe AI.
 
 API reference: [JavaScript SDK](https://docs.typesafe.ai/sdk/javascript), [HTTP API](https://docs.typesafe.ai/api), [model listing](https://docs.typesafe.ai/models).

@@ -32,7 +32,8 @@ func resolveRetry(policy *RetryPolicy) (RetryPolicy, error) {
 	if policy == nil {
 		return result, nil
 	}
-	if policy.MaxRetries < 0 || policy.InitialBackoff < 0 || policy.MaxBackoff < 0 || policy.MaxRetryAfter < 0 {
+	if policy.MaxRetries < 0 || policy.InitialBackoff < 0 || policy.MaxBackoff < 0 ||
+		policy.MaxRetryAfter < 0 {
 		return RetryPolicy{}, errors.New("jev: retry counts and delays cannot be negative")
 	}
 	result.MaxRetries = policy.MaxRetries
@@ -46,13 +47,16 @@ func resolveRetry(policy *RetryPolicy) (RetryPolicy, error) {
 		result.MaxRetryAfter = policy.MaxRetryAfter
 	}
 	if result.MaxBackoff < result.InitialBackoff {
-		return RetryPolicy{}, errors.New("jev: maximum backoff must be at least the initial backoff")
+		return RetryPolicy{}, errors.New(
+			"jev: maximum backoff must be at least the initial backoff",
+		)
 	}
 	return result, nil
 }
 
 func retryable(status int) bool {
-	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500 && status <= 599
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests ||
+		status >= 500 && status <= 599
 }
 
 func backoff(attempt int, policy RetryPolicy) time.Duration {
@@ -67,17 +71,28 @@ func backoff(attempt int, policy RetryPolicy) time.Duration {
 	if delay > policy.MaxBackoff {
 		delay = policy.MaxBackoff
 	}
+	// #nosec G404 -- backoff jitter does not protect secrets or select security-sensitive values.
 	return time.Duration(float64(delay) * (1 - 0.25*rand.Float64()))
 }
 
 func retryDelay(attempt int, headers http.Header, policy RetryPolicy) time.Duration {
 	if raw := strings.TrimSpace(headers.Get("Retry-After-Ms")); raw != "" {
-		if ms, err := strconv.ParseInt(raw, 10, 64); err == nil && ms >= 0 && ms <= int64(policy.MaxRetryAfter/time.Millisecond) {
+		if ms, err := strconv.ParseInt(
+			raw,
+			10,
+			64,
+		); err == nil && ms >= 0 &&
+			ms <= int64(policy.MaxRetryAfter/time.Millisecond) {
 			return time.Duration(ms) * time.Millisecond
 		}
 	}
 	if raw := strings.TrimSpace(headers.Get("Retry-After")); raw != "" {
-		if seconds, err := strconv.ParseInt(raw, 10, 64); err == nil && seconds >= 0 && seconds <= int64(policy.MaxRetryAfter/time.Second) {
+		if seconds, err := strconv.ParseInt(
+			raw,
+			10,
+			64,
+		); err == nil && seconds >= 0 &&
+			seconds <= int64(policy.MaxRetryAfter/time.Second) {
 			return time.Duration(seconds) * time.Second
 		}
 		if date, err := http.ParseTime(raw); err == nil {

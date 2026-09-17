@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 )
@@ -22,17 +23,21 @@ const (
 	maxResponseSize = 4 << 20
 )
 
-// Config controls a client. Explicit nonempty values take precedence over
-// TYPESAFE_API_KEY, TYPESAFE_BASE_URL, and TYPESAFE_DEFAULT_MODEL.
+// Config controls a client. Environment variables are never consulted unless
+// ReadFromEnvironment is true. Explicit values take precedence when enabled.
 // A Client and its HTTPClient may be shared by concurrent goroutines.
 type Config struct {
 	APIKey       string
 	BaseURL      string
 	DefaultModel string
-	HTTPClient   *http.Client
-	Timeout      time.Duration // per attempt; default 10 seconds
-	Retry        *RetryPolicy  // nil uses the default policy; MaxRetries: 0 disables retries
-	Headers      http.Header   // optional additional headers; copied at construction
+
+	// ReadFromEnvironment opts into TYPESAFE_API_KEY, TYPESAFE_BASE_URL, and
+	// TYPESAFE_DEFAULT_MODEL as fallbacks for unspecified fields.
+	ReadFromEnvironment bool
+	HTTPClient          *http.Client
+	Timeout             time.Duration // per attempt; default 10 seconds
+	Retry               *RetryPolicy  // nil uses the default policy; MaxRetries: 0 disables retries
+	Headers             http.Header   // optional additional headers; copied at construction
 }
 
 // CallOptions override client settings for one call. Context controls the
@@ -55,20 +60,31 @@ type Client struct {
 }
 
 // NewClient constructs a client without making a network request.
-// The API key must come from Config or TYPESAFE_API_KEY; only HTTPS and local
-// loopback HTTP endpoints are accepted to keep credentials off plaintext links.
+// The API key must come from Config (or the environment when opted in).
+// Only HTTPS and local loopback HTTP endpoints are accepted to keep
+// credentials off plaintext links.
 func NewClient(cfg Config) (*Client, error) {
-	key := configured(cfg.APIKey, "TYPESAFE_API_KEY", "")
+	key := configured(cfg.APIKey, "TYPESAFE_API_KEY", "", cfg.ReadFromEnvironment)
 	if key == "" {
-		return nil, errors.New("jev: API key is required (set Config.APIKey or TYPESAFE_API_KEY)")
+		return nil, errors.New(
+			"jev: API key is required (set Config.APIKey, or opt into ReadFromEnvironment)",
+		)
 	}
 	if strings.ContainsAny(key, "\r\n") {
 		return nil, errors.New("jev: API key must not contain newlines")
 	}
-	base := configured(cfg.BaseURL, "TYPESAFE_BASE_URL", defaultBaseURL)
+	base := configured(cfg.BaseURL, "TYPESAFE_BASE_URL", defaultBaseURL, cfg.ReadFromEnvironment)
 	u, err := url.Parse(base)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && loopback(u.Hostname()))) {
-		return nil, errors.New("jev: base URL must be HTTPS or loopback HTTP, with no credentials, query, or fragment")
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
+		(u.Scheme != "https" && (u.Scheme != "http" || !loopback(u.Hostname()))) {
+		return nil, errors.New(
+			"jev: base URL must be HTTPS or loopback HTTP, with no credentials, query, or fragment",
+		)
+	}
+	if strings.EqualFold(u.Hostname(), "ai-gateway.vercel.sh") {
+		return nil, errors.New(
+			"jev: Vercel AI Gateway does not expose Jev evaluation through the TypeSafe REST API",
+		)
 	}
 	if cfg.Timeout < 0 {
 		return nil, errors.New("jev: timeout cannot be negative")
@@ -92,22 +108,29 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, err
 	}
 	return &Client{
-		apiKey:       key,
-		baseURL:      strings.TrimRight(base, "/"),
-		defaultModel: configured(cfg.DefaultModel, "TYPESAFE_DEFAULT_MODEL", defaultModel),
-		httpClient:   &clientCopy,
-		timeout:      timeout,
-		retry:        policy,
-		headers:      cfg.Headers.Clone(),
+		apiKey:  key,
+		baseURL: strings.TrimRight(base, "/"),
+		defaultModel: configured(
+			cfg.DefaultModel,
+			"TYPESAFE_DEFAULT_MODEL",
+			defaultModel,
+			cfg.ReadFromEnvironment,
+		),
+		httpClient: &clientCopy,
+		timeout:    timeout,
+		retry:      policy,
+		headers:    cfg.Headers.Clone(),
 	}, nil
 }
 
-func configured(explicit, env, fallback string) string {
+func configured(explicit, env, fallback string, readFromEnv bool) string {
 	if v := strings.TrimSpace(explicit); v != "" {
 		return v
 	}
-	if v := strings.TrimSpace(os.Getenv(env)); v != "" {
-		return v
+	if readFromEnv {
+		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+			return v
+		}
 	}
 	return fallback
 }
@@ -122,7 +145,11 @@ func loopback(host string) bool {
 
 // SystemOne evaluates named questions, returning their answers and token usage.
 // Callers can set a total time budget with context.WithTimeout.
-func (c *Client) SystemOne(ctx context.Context, request Request, options ...CallOptions) (Response, error) {
+func (c *Client) SystemOne(
+	ctx context.Context,
+	request Request,
+	options ...CallOptions,
+) (Response, error) {
 	var result Response
 	if c == nil {
 		return result, errors.New("jev: nil client")
@@ -147,12 +174,29 @@ func (c *Client) SystemOne(ctx context.Context, request Request, options ...Call
 	if result.Answers == nil || result.Model == "" {
 		return Response{}, errors.New("jev: evaluation response is missing model or answers")
 	}
+	for _, name := range sortedQuestionNames(request.Questions) {
+		question := request.Questions[name]
+		answer, ok := result.Answers[name]
+		if !ok || answer.Type != question.Type {
+			return Response{}, fmt.Errorf(
+				"jev: evaluation response is missing or mismatches question %q",
+				name,
+			)
+		}
+	}
+	if len(result.Answers) != len(request.Questions) {
+		return Response{}, errors.New("jev: evaluation response contains unexpected answers")
+	}
 	result.RequestID = requestID
 	return result, nil
 }
 
 // Ask is a convenience alias for SystemOne.
-func (c *Client) Ask(ctx context.Context, request Request, options ...CallOptions) (Response, error) {
+func (c *Client) Ask(
+	ctx context.Context,
+	request Request,
+	options ...CallOptions,
+) (Response, error) {
 	return c.SystemOne(ctx, request, options...)
 }
 
@@ -181,7 +225,8 @@ func validateQuestions(questions map[string]Question) error {
 	if len(questions) == 0 {
 		return errors.New("jev: provide at least one question")
 	}
-	for name, q := range questions {
+	for _, name := range sortedQuestionNames(questions) {
+		q := questions[name]
 		if strings.TrimSpace(name) == "" {
 			return errors.New("jev: question names cannot be blank")
 		}
@@ -190,13 +235,21 @@ func validateQuestions(questions map[string]Question) error {
 			// Instructions or outcome descriptions may be omitted.
 		case QuestionChoice:
 			v := reflect.ValueOf(q.Criteria)
-			if !v.IsValid() || v.Kind() != reflect.Map || v.Type().Key().Kind() != reflect.String || v.Len() == 0 {
+			if !v.IsValid() || v.Kind() != reflect.Map || v.Type().Key().Kind() != reflect.String ||
+				v.Len() == 0 {
 				return fmt.Errorf("jev: choice question %q requires named options", name)
+			}
+			if v.Len() > 255 {
+				return fmt.Errorf("jev: choice question %q exceeds 255 options", name)
 			}
 		case QuestionScore:
 			v := reflect.ValueOf(q.Criteria)
-			if !v.IsValid() || (v.Kind() != reflect.Slice && v.Kind() != reflect.Array) || v.Len() < 2 {
+			if !v.IsValid() || (v.Kind() != reflect.Slice && v.Kind() != reflect.Array) ||
+				v.Len() < 2 {
 				return fmt.Errorf("jev: score question %q requires at least two levels", name)
+			}
+			if v.Len() > 10 {
+				return fmt.Errorf("jev: score question %q exceeds 10 levels", name)
 			}
 		default:
 			return fmt.Errorf("jev: question %q has unsupported type %q", name, q.Type)
@@ -205,7 +258,21 @@ func validateQuestions(questions map[string]Question) error {
 	return nil
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body []byte, options []CallOptions) ([]byte, string, error) {
+func sortedQuestionNames(questions map[string]Question) []string {
+	names := make([]string, 0, len(questions))
+	for name := range questions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (c *Client) do(
+	ctx context.Context,
+	method, path string,
+	body []byte,
+	options []CallOptions,
+) ([]byte, string, error) {
 	if ctx == nil {
 		return nil, "", errors.New("jev: context cannot be nil")
 	}
