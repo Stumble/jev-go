@@ -8,7 +8,26 @@ An independent Go SDK for [TypeSafe AI's Jev / System One API](https://docs.type
 go get github.com/stumble/jev-go
 ```
 
-Set `TYPESAFE_API_KEY` in your server environment (never embed it in a browser or commit it to a repository).
+Provide `TYPESAFE_API_KEY` for the direct provider or `AI_GATEWAY_API_KEY` for Vercel through your server-side configuration (never embed keys in a browser or commit them to a repository).
+
+To install the interactive CLI:
+
+```sh
+go install github.com/stumble/jev-go/cmd/jev@latest
+```
+
+Run it with either provider. The CLI reads the credential itself and passes it explicitly to the SDK:
+
+```sh
+# TypeSafe direct API (the default provider)
+TYPESAFE_API_KEY=... jev
+
+# Vercel AI Gateway
+AI_GATEWAY_API_KEY=... jev -provider vercel \
+  -zero-data-retention -no-training
+```
+
+The wizard accepts text or a one-line JSON object/array as state, then lets you add any mix of Noul, Choice, and Score questions. Submit a blank question ID to send the request; prompts go to stderr and the normalized response goes to stdout as indented JSON, so piping into `jq` works. Provider metadata is hidden by default because Gateway routing data is verbose; add `-show-metadata` when you need cost, routing, or generation details. Other options include `-model`, `-timeout`, and `-base-url` (useful for a proxy or local testing). Run `jev -h` for the complete list. API keys are intentionally not accepted as command-line flags so they do not enter shell history or process listings.
 
 ## Ask questions
 

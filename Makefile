@@ -1,4 +1,7 @@
-.PHONY: fmt-check lint lint-fix test ci
+.PHONY: build fmt-check lint lint-fix test ci
+
+build:
+	go build -o bin/jev ./cmd/jev
 
 fmt-check:
 	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
