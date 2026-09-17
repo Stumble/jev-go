@@ -7,7 +7,7 @@ into the consuming application unless the user explicitly asks to fork it.
 
 When an agent does not have this repository checked out, give it this URL:
 
-`https://raw.githubusercontent.com/Stumble/jev-go/main/AGENTS.md`
+`https://raw.githubusercontent.com/stumble/jev-go/refs/heads/main/AGENTS.md`
 
 ## What this project is
 
@@ -415,7 +415,7 @@ the SDK in the consumer application.
 - SDK repository and human README:
   `https://github.com/Stumble/jev-go`
 - Raw agent guide:
-  `https://raw.githubusercontent.com/Stumble/jev-go/main/AGENTS.md`
+  `https://raw.githubusercontent.com/stumble/jev-go/refs/heads/main/AGENTS.md`
 - TypeSafe JavaScript SDK behavior:
   `https://docs.typesafe.ai/sdk/javascript`
 - TypeSafe HTTP API:

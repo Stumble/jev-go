@@ -6,7 +6,7 @@ An independent Go SDK for [TypeSafe AI's Jev / System One API](https://docs.type
 
 Give an agent this single, self-contained integration guide:
 
-`https://raw.githubusercontent.com/Stumble/jev-go/main/AGENTS.md`
+`https://raw.githubusercontent.com/stumble/jev-go/refs/heads/main/AGENTS.md`
 
 The rendered version is [AGENTS.md](https://github.com/Stumble/jev-go/blob/main/AGENTS.md). It is specifically for agents integrating the SDK into a consuming Go application and covers provider selection, complete request/response semantics, security boundaries, retries, error handling, CLI usage, testing, and a delivery checklist.
 
