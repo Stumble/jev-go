@@ -1,5 +1,21 @@
 # jev-go
 
+<p align="center">
+  <a href="https://github.com/Stumble/jev-go/actions/workflows/test.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Stumble/jev-go/test.yml?branch=main&amp;style=flat-square&amp;logo=githubactions&amp;logoColor=white&amp;label=CI"></a>
+  <a href="https://pkg.go.dev/github.com/stumble/jev-go"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/stumble/jev-go.svg"></a>
+  <a href="https://github.com/Stumble/jev-go/blob/main/go.mod"><img alt="Go Version" src="https://img.shields.io/github/go-mod/go-version/Stumble/jev-go?style=flat-square&amp;logo=go&amp;logoColor=white"></a>
+  <a href="https://github.com/Stumble/jev-go/blob/main/LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/Stumble/jev-go?style=flat-square"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Stumble/jev-go/actions/workflows/test.yml"><img alt="Coverage Gate" src="https://img.shields.io/badge/coverage-%E2%89%A585%25-brightgreen?style=flat-square"></a>
+  <a href="https://github.com/Stumble/jev-go/actions/workflows/test.yml"><img alt="Race Detector" src="https://img.shields.io/badge/race-tested-brightgreen?style=flat-square&amp;logo=go"></a>
+  <a href="https://github.com/Stumble/jev-go/blob/main/.golangci.yml"><img alt="golangci-lint v2" src="https://img.shields.io/badge/golangci--lint-v2-blue?style=flat-square&amp;logo=go&amp;logoColor=white"></a>
+  <a href="https://github.com/Stumble/jev-go/blob/main/go.mod"><img alt="Standard Library Only" src="https://img.shields.io/badge/dependencies-stdlib%20only-00ADD8?style=flat-square&amp;logo=go&amp;logoColor=white"></a>
+  <a href="#install"><img alt="Installable CLI" src="https://img.shields.io/badge/CLI-go%20install-00ADD8?style=flat-square&amp;logo=go&amp;logoColor=white"></a>
+  <a href="https://github.com/Stumble/jev-go/blob/main/AGENTS.md"><img alt="TypeSafe and Vercel Providers" src="https://img.shields.io/badge/providers-TypeSafe%20%7C%20Vercel-6C47FF?style=flat-square"></a>
+</p>
+
 An independent Go SDK for [TypeSafe AI's Jev / System One API](https://docs.typesafe.ai/api). This is a community-maintained client, not an official TypeSafe AI SDK.
 
 ## For coding agents
