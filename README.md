@@ -2,6 +2,14 @@
 
 An independent Go SDK for [TypeSafe AI's Jev / System One API](https://docs.typesafe.ai/api). This is a community-maintained client, not an official TypeSafe AI SDK.
 
+## For coding agents
+
+Give an agent this single, self-contained integration guide:
+
+`https://raw.githubusercontent.com/Stumble/jev-go/main/AGENTS.md`
+
+The rendered version is [AGENTS.md](https://github.com/Stumble/jev-go/blob/main/AGENTS.md). It covers provider selection, complete request/response semantics, security boundaries, retries, error handling, CLI usage, testing, and repository contribution rules.
+
 ## Install
 
 ```sh
