@@ -18,21 +18,32 @@ import (
 )
 
 const (
-	defaultBaseURL  = "https://api.typesafe.ai"
-	defaultModel    = "jev-latest"
-	maxResponseSize = 4 << 20
+	defaultBaseURL     = "https://api.typesafe.ai"
+	defaultModel       = "jev-latest"
+	vercelBaseURL      = "https://ai-gateway.vercel.sh/v4/ai"
+	vercelDefaultModel = "typesafe-ai/jev"
+	maxResponseSize    = 4 << 20
+)
+
+// Provider selects the upstream evaluation protocol.
+type Provider string
+
+const (
+	ProviderTypeSafe Provider = "typesafe" // Config's default; TypeSafe's public API
+	ProviderVercel   Provider = "vercel"   // experimental AI Gateway evaluation transport
 )
 
 // Config controls a client. Environment variables are never consulted unless
 // ReadFromEnvironment is true. Explicit values take precedence when enabled.
 // A Client and its HTTPClient may be shared by concurrent goroutines.
 type Config struct {
+	Provider     Provider
 	APIKey       string
 	BaseURL      string
 	DefaultModel string
 
-	// ReadFromEnvironment opts into TYPESAFE_API_KEY, TYPESAFE_BASE_URL, and
-	// TYPESAFE_DEFAULT_MODEL as fallbacks for unspecified fields.
+	// ReadFromEnvironment opts into the selected provider's environment
+	// fallbacks. TypeSafe uses TYPESAFE_*; Vercel uses AI_GATEWAY_API_KEY.
 	ReadFromEnvironment bool
 	HTTPClient          *http.Client
 	Timeout             time.Duration // per attempt; default 10 seconds
@@ -48,8 +59,9 @@ type CallOptions struct {
 	Headers http.Header
 }
 
-// Client evaluates questions through the TypeSafe AI API.
+// Client evaluates questions through the configured provider.
 type Client struct {
+	provider     Provider
 	apiKey       string
 	baseURL      string
 	defaultModel string
@@ -64,7 +76,21 @@ type Client struct {
 // Only HTTPS and local loopback HTTP endpoints are accepted to keep
 // credentials off plaintext links.
 func NewClient(cfg Config) (*Client, error) {
-	key := configured(cfg.APIKey, "TYPESAFE_API_KEY", "", cfg.ReadFromEnvironment)
+	provider := cfg.Provider
+	if provider == "" {
+		provider = ProviderTypeSafe
+	}
+	keyEnv, baseEnv, modelEnv := "TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "TYPESAFE_DEFAULT_MODEL"
+	baseDefault, modelDefault := defaultBaseURL, defaultModel
+	switch provider {
+	case ProviderTypeSafe:
+	case ProviderVercel:
+		keyEnv, baseEnv, modelEnv = "AI_GATEWAY_API_KEY", "", ""
+		baseDefault, modelDefault = vercelBaseURL, vercelDefaultModel
+	default:
+		return nil, fmt.Errorf("jev: unsupported provider %q", provider)
+	}
+	key := configured(cfg.APIKey, keyEnv, "", cfg.ReadFromEnvironment)
 	if key == "" {
 		return nil, errors.New(
 			"jev: API key is required (set Config.APIKey, or opt into ReadFromEnvironment)",
@@ -73,7 +99,7 @@ func NewClient(cfg Config) (*Client, error) {
 	if strings.ContainsAny(key, "\r\n") {
 		return nil, errors.New("jev: API key must not contain newlines")
 	}
-	base := configured(cfg.BaseURL, "TYPESAFE_BASE_URL", defaultBaseURL, cfg.ReadFromEnvironment)
+	base := configured(cfg.BaseURL, baseEnv, baseDefault, cfg.ReadFromEnvironment)
 	u, err := url.Parse(base)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
 		(u.Scheme != "https" && (u.Scheme != "http" || !loopback(u.Hostname()))) {
@@ -81,10 +107,13 @@ func NewClient(cfg Config) (*Client, error) {
 			"jev: base URL must be HTTPS or loopback HTTP, with no credentials, query, or fragment",
 		)
 	}
-	if strings.EqualFold(u.Hostname(), "ai-gateway.vercel.sh") {
+	if provider == ProviderTypeSafe && strings.EqualFold(u.Hostname(), "ai-gateway.vercel.sh") {
 		return nil, errors.New(
-			"jev: Vercel AI Gateway does not expose Jev evaluation through the TypeSafe REST API",
+			"jev: choose ProviderVercel to use AI Gateway evaluation",
 		)
+	}
+	if provider == ProviderVercel && strings.EqualFold(u.Hostname(), "api.typesafe.ai") {
+		return nil, errors.New("jev: Vercel credentials cannot be sent to TypeSafe's API")
 	}
 	if cfg.Timeout < 0 {
 		return nil, errors.New("jev: timeout cannot be negative")
@@ -108,12 +137,13 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, err
 	}
 	return &Client{
-		apiKey:  key,
-		baseURL: strings.TrimRight(base, "/"),
+		provider: provider,
+		apiKey:   key,
+		baseURL:  strings.TrimRight(base, "/"),
 		defaultModel: configured(
 			cfg.DefaultModel,
-			"TYPESAFE_DEFAULT_MODEL",
-			defaultModel,
+			modelEnv,
+			modelDefault,
 			cfg.ReadFromEnvironment,
 		),
 		httpClient: &clientCopy,
@@ -127,7 +157,7 @@ func configured(explicit, env, fallback string, readFromEnv bool) string {
 	if v := strings.TrimSpace(explicit); v != "" {
 		return v
 	}
-	if readFromEnv {
+	if readFromEnv && env != "" {
 		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
 			return v
 		}
@@ -157,18 +187,35 @@ func (c *Client) SystemOne(
 	if err := validateQuestions(request.Questions); err != nil {
 		return result, err
 	}
+	if c.provider != ProviderVercel && request.Gateway != nil {
+		return result, errors.New("jev: Gateway options require ProviderVercel")
+	}
 	if request.Model == "" {
 		request.Model = c.defaultModel
 	}
-	body, err := json.Marshal(request)
+	var body []byte
+	var path string
+	var err error
+	if c.provider == ProviderVercel {
+		body, err = marshalVercelRequest(request)
+		path = "/evaluation-model"
+	} else {
+		body, err = json.Marshal(request)
+		path = "/v1/systemone"
+	}
 	if err != nil {
 		return result, fmt.Errorf("jev: encode request: %w", err)
 	}
-	data, requestID, err := c.do(ctx, http.MethodPost, "/v1/systemone", body, options)
+	data, requestID, err := c.do(ctx, http.MethodPost, path, body, request.Model, options)
 	if err != nil {
 		return result, err
 	}
-	if err := json.Unmarshal(data, &result); err != nil {
+	if c.provider == ProviderVercel {
+		result, err = decodeVercelResponse(data, request)
+	} else {
+		err = json.Unmarshal(data, &result)
+	}
+	if err != nil {
 		return Response{}, fmt.Errorf("jev: decode evaluation: %w", err)
 	}
 	if result.Answers == nil || result.Model == "" {
@@ -205,7 +252,10 @@ func (c *Client) ListModels(ctx context.Context, options ...CallOptions) ([]Mode
 	if c == nil {
 		return nil, errors.New("jev: nil client")
 	}
-	data, _, err := c.do(ctx, http.MethodGet, "/v1/models", nil, options)
+	if c.provider == ProviderVercel {
+		return nil, errors.New("jev: ListModels is supported only by ProviderTypeSafe")
+	}
+	data, _, err := c.do(ctx, http.MethodGet, "/v1/models", nil, "", options)
 	if err != nil {
 		return nil, err
 	}
@@ -271,6 +321,7 @@ func (c *Client) do(
 	ctx context.Context,
 	method, path string,
 	body []byte,
+	model string,
 	options []CallOptions,
 ) ([]byte, string, error) {
 	if ctx == nil {
@@ -337,10 +388,16 @@ func (c *Client) do(
 		}
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 		req.Header.Set("Accept", "application/json")
+		if c.provider == ProviderVercel {
+			req.Header.Set("Ai-Evaluation-Model-Specification-Version", "4")
+			req.Header.Set("Ai-Model-Id", model)
+			req.Header.Set("Ai-Gateway-Protocol-Version", "0.0.1")
+			req.Header.Set("Ai-Gateway-Auth-Method", "api-key")
+		}
 		if body != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		if attempt > 0 {
+		if attempt > 0 && c.provider == ProviderTypeSafe {
 			req.Header.Set("X-TypeSafe-Retry-Count", fmt.Sprint(attempt))
 		}
 		res, err := c.httpClient.Do(req)
@@ -388,7 +445,15 @@ func (c *Client) do(
 func validateHeaders(headers http.Header) error {
 	for name := range headers {
 		switch strings.ToLower(name) {
-		case "authorization", "content-type", "accept", "host", "x-typesafe-retry-count":
+		case "authorization",
+			"content-type",
+			"accept",
+			"host",
+			"x-typesafe-retry-count",
+			"ai-model-id",
+			"ai-evaluation-model-specification-version",
+			"ai-gateway-protocol-version",
+			"ai-gateway-auth-method":
 			return fmt.Errorf("jev: header %q is managed by the client", name)
 		}
 	}

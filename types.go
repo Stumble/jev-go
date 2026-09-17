@@ -1,5 +1,5 @@
-// Package jev provides a Go client for TypeSafe AI's System One API.
-// It evaluates named Noul, Choice, and Score questions about JSON-compatible state.
+// Package jev evaluates named Noul, Choice, and Score questions with TypeSafe
+// AI's Jev, either directly or through Vercel AI Gateway.
 package jev
 
 import (
@@ -65,6 +65,19 @@ type Request struct {
 	State     any                 `json:"state"`
 	Questions map[string]Question `json:"questions"`
 	Model     string              `json:"model,omitempty"`
+	// Gateway contains request options used only with ProviderVercel.
+	Gateway *GatewayOptions `json:"-"`
+}
+
+// GatewayOptions contains the Vercel AI Gateway evaluation controls most
+// relevant to Jev. A nil value sends no providerOptions field.
+type GatewayOptions struct {
+	ZeroDataRetention      bool     `json:"zeroDataRetention,omitempty"`
+	DisallowPromptTraining bool     `json:"disallowPromptTraining,omitempty"`
+	Only                   []string `json:"only,omitempty"`
+	Order                  []string `json:"order,omitempty"`
+	Tags                   []string `json:"tags,omitempty"`
+	User                   string   `json:"user,omitempty"`
 }
 
 // Answer is discriminated by Type. Read only the fields for that type:
@@ -76,6 +89,7 @@ type Answer struct {
 	Choice        string                     `json:"choice,omitempty"`
 	Score         float64                    `json:"score,omitempty"`
 	Confidence    float64                    `json:"confidence,omitempty"`
+	HasConfidence bool                       `json:"-"` // false when the provider did not supply confidence
 	Probabilities map[string]float64         `json:"probabilities,omitempty"`
 	Legend        map[string]json.RawMessage `json:"legend,omitempty"`
 }
@@ -89,20 +103,28 @@ func (a Answer) MarshalJSON() ([]byte, error) {
 			Noul float64      `json:"noul"`
 		}{a.Type, a.Noul})
 	case QuestionChoice:
+		var confidence *float64
+		if a.HasConfidence {
+			confidence = &a.Confidence
+		}
 		return json.Marshal(struct {
 			Type          QuestionType       `json:"type"`
 			Choice        string             `json:"choice"`
-			Confidence    float64            `json:"confidence"`
-			Probabilities map[string]float64 `json:"probabilities"`
-		}{a.Type, a.Choice, a.Confidence, a.Probabilities})
+			Confidence    *float64           `json:"confidence,omitempty"`
+			Probabilities map[string]float64 `json:"probabilities,omitempty"`
+		}{a.Type, a.Choice, confidence, a.Probabilities})
 	case QuestionScore:
+		var confidence *float64
+		if a.HasConfidence {
+			confidence = &a.Confidence
+		}
 		return json.Marshal(struct {
 			Type          QuestionType               `json:"type"`
 			Score         float64                    `json:"score"`
-			Confidence    float64                    `json:"confidence"`
-			Legend        map[string]json.RawMessage `json:"legend"`
-			Probabilities map[string]float64         `json:"probabilities"`
-		}{a.Type, a.Score, a.Confidence, a.Legend, a.Probabilities})
+			Confidence    *float64                   `json:"confidence,omitempty"`
+			Legend        map[string]json.RawMessage `json:"legend,omitempty"`
+			Probabilities map[string]float64         `json:"probabilities,omitempty"`
+		}{a.Type, a.Score, confidence, a.Legend, a.Probabilities})
 	default:
 		return nil, errors.New("answer has an unsupported type")
 	}
@@ -140,6 +162,7 @@ func (a *Answer) UnmarshalJSON(data []byte) error {
 		}
 		result.Choice = *raw.Choice
 		result.Confidence = *raw.Confidence
+		result.HasConfidence = true
 		result.Probabilities = raw.Probabilities
 	case QuestionScore:
 		if raw.Score == nil || raw.Confidence == nil || len(raw.Legend) == 0 ||
@@ -150,6 +173,7 @@ func (a *Answer) UnmarshalJSON(data []byte) error {
 		}
 		result.Score = *raw.Score
 		result.Confidence = *raw.Confidence
+		result.HasConfidence = true
 		result.Legend = raw.Legend
 		result.Probabilities = raw.Probabilities
 	default:
@@ -173,12 +197,30 @@ type Usage struct {
 	OutputTokens int `json:"output_tokens"`
 }
 
+// Rounding reports the precision applied by an evaluation provider.
+type Rounding struct {
+	ProbabilityDecimals *int `json:"probabilityDecimals,omitempty"`
+	ScoreDecimals       *int `json:"scoreDecimals,omitempty"`
+}
+
+// Warning describes a non-fatal provider compatibility or support issue.
+type Warning struct {
+	Type    string `json:"type"`
+	Feature string `json:"feature,omitempty"`
+	Details string `json:"details,omitempty"`
+	Setting string `json:"setting,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
 // Response contains the answers under the same keys as the request's questions.
 type Response struct {
-	Model     string            `json:"model"`
-	Answers   map[string]Answer `json:"answers"`
-	Usage     Usage             `json:"usage"`
-	RequestID string            `json:"-"` // from the HTTP response header, if provided
+	Model            string                     `json:"model"`
+	Answers          map[string]Answer          `json:"answers"`
+	Usage            Usage                      `json:"usage"`
+	RequestID        string                     `json:"-"` // from the HTTP response header, if provided
+	Rounding         *Rounding                  `json:"rounding,omitempty"`
+	Warnings         []Warning                  `json:"warnings,omitempty"`
+	ProviderMetadata map[string]json.RawMessage `json:"provider_metadata,omitempty"`
 }
 
 // Model describes an available model or alias.

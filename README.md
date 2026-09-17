@@ -82,13 +82,35 @@ if errors.As(err, &apiErr) {
 _ = result
 ```
 
-By default the SDK never reads environment variables. Pass the API key and other settings from your application's configuration, or explicitly use `jev.Config{ReadFromEnvironment: true}` to enable `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, and `TYPESAFE_DEFAULT_MODEL` as fallbacks. Explicit values win over environment variables; defaults are `https://api.typesafe.ai` and `jev-latest`. A custom `*http.Client` and additional request headers can be supplied through `Config`; per-call headers and timeout can be supplied through `CallOptions`. The client owns Authorization, Accept, Content-Type, and retry-count headers, and does not follow redirects with the bearer token. Non-HTTPS custom endpoints are allowed only on loopback for safe local testing.
+By default the SDK never reads environment variables. Pass settings from your application's configuration, or explicitly set `ReadFromEnvironment: true`. The TypeSafe provider then uses `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, and `TYPESAFE_DEFAULT_MODEL` as fallbacks; the Vercel provider uses `AI_GATEWAY_API_KEY`. Explicit values always win. A custom `*http.Client` and additional request headers can be supplied through `Config`; per-call headers and timeout can be supplied through `CallOptions`. The client owns authentication and protocol headers and does not follow redirects with the bearer token. Non-HTTPS custom endpoints are allowed only on loopback for safe local testing.
 
 The default retry policy makes up to two retries for connection failures, per-attempt timeouts, and HTTP 408, 429, and 5xx responses (including 529). It uses jittered exponential backoff and honors `Retry-After` and `Retry-After-Ms` up to one minute. Set `Retry: &jev.RetryPolicy{MaxRetries: 0}` to disable retries. Cancellation of the caller's context interrupts both requests and pending backoff; use a context deadline to bound the whole operation.
 
 ## Vercel AI Gateway
 
-Vercel lists Jev as an evaluation model under `typesafe-ai/jev`, but [Gateway Evaluation is currently available only through AI SDK 7](https://vercel.com/docs/ai-gateway/modalities/evaluation). It is **not** available through the documented REST-compatible Gateway endpoints, and it uses a different Boolean answer shape from TypeSafe's direct Noul response. Therefore, a Vercel Gateway key or Gateway `BaseURL` cannot be used with this direct TypeSafe client. Do not send a Gateway key to `api.typesafe.ai`. Supporting Gateway evaluation in Go would require Vercel to publish a stable HTTP contract or a separate service running their AI SDK; this package does not rely on private Gateway endpoints.
+Select `ProviderVercel` to call [Jev on Vercel AI Gateway](https://vercel.com/ai-gateway/models/jev). The client uses Gateway's Evaluation v4 transport and normalizes its `boolean` answers to the same `Noul` answer exposed by the TypeSafe provider.
+
+```go
+client, err := jev.NewClient(jev.Config{
+	Provider: jev.ProviderVercel,
+	APIKey:   os.Getenv("AI_GATEWAY_API_KEY"),
+})
+
+response, err := client.Ask(ctx, jev.Request{
+	State: "The support agent issued a full refund.",
+	Questions: map[string]jev.Question{
+		"refunded": jev.Noul("Was a refund issued?"),
+	},
+	Gateway: &jev.GatewayOptions{
+		ZeroDataRetention:      true,
+		DisallowPromptTraining: true,
+	},
+})
+```
+
+The Vercel defaults are `https://ai-gateway.vercel.sh/v4/ai` and `typesafe-ai/jev`. With `ReadFromEnvironment: true`, this provider reads only `AI_GATEWAY_API_KEY`; the application can still pass the key explicitly as above. The client reconstructs Score legends from the request and normalizes TypeSafe's Gateway confidence metadata into `Answer.Confidence`; `HasConfidence` distinguishes a missing value from a valid zero. Original metadata remains available in `Response.ProviderMetadata`. `ListModels` currently targets the TypeSafe account-specific model API and returns an explicit error with the Vercel provider.
+
+Vercel documents Evaluation as an AI SDK 7 feature rather than an OpenAI-compatible endpoint. This package follows the public Evaluation v4 contract implemented by Vercel's open-source Gateway provider; changes to that experimental contract may require an SDK update. Never send a Vercel key to the TypeSafe endpoint or vice versa—the client rejects those known mismatches.
 
 ## Development
 

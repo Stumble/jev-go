@@ -404,6 +404,19 @@ func TestConfiguration(t *testing.T) {
 	); err == nil {
 		t.Fatal("expected error for reserved auth header")
 	}
+	if _, err := jev.NewClient(jev.Config{Provider: "unknown", APIKey: "explicit"}); err == nil {
+		t.Fatal("expected error for unsupported provider")
+	}
+	typesafe, err := jev.NewClient(jev.Config{APIKey: "explicit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := typesafe.Ask(context.Background(), jev.Request{
+		Questions: map[string]jev.Question{"x": jev.Noul("x")},
+		Gateway:   &jev.GatewayOptions{ZeroDataRetention: true},
+	}); err == nil {
+		t.Fatal("expected Gateway options to require ProviderVercel")
+	}
 }
 
 func TestMapOrderAndValidationAreDeterministic(t *testing.T) {
