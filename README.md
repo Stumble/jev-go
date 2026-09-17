@@ -14,13 +14,33 @@
   <a href="https://github.com/Stumble/jev-go/blob/main/go.mod"><img alt="Standard Library Only" src="https://img.shields.io/badge/dependencies-stdlib%20only-00ADD8?style=flat-square&amp;logo=go&amp;logoColor=white"></a>
   <a href="#install"><img alt="Installable CLI" src="https://img.shields.io/badge/CLI-go%20install-00ADD8?style=flat-square&amp;logo=go&amp;logoColor=white"></a>
   <a href="https://github.com/Stumble/jev-go/blob/main/AGENTS.md"><img alt="TypeSafe and Vercel Providers" src="https://img.shields.io/badge/providers-TypeSafe%20%7C%20Vercel-6C47FF?style=flat-square"></a>
+  <a href="https://github.com/Stumble/jev-go/blob/main/skills/jev-go/SKILL.md"><img alt="jev-go Agent Skill" src="https://img.shields.io/badge/agent_skill-jev--go-6C47FF?style=flat-square&amp;logo=githubcopilot&amp;logoColor=white"></a>
 </p>
 
 An independent Go SDK for [TypeSafe AI's Jev / System One API](https://docs.typesafe.ai/api). This is a community-maintained client, not an official TypeSafe AI SDK.
 
 ## For coding agents
 
-Give an agent this single, self-contained integration guide:
+First install or read TypeSafe's official skill; it is the authority for Jev,
+System One, question design, and current patterns:
+
+```bash
+npx skills add typesafe-ai/skills --skill typesafe-ai
+```
+
+[Official skill documentation](https://docs.typesafe.ai/agent-skill) ·
+[Raw official SKILL.md](https://raw.githubusercontent.com/typesafe-ai/skills/main/skills/typesafe-ai/SKILL.md)
+
+Then install the `jev-go` adapter skill:
+
+```bash
+npx skills add Stumble/jev-go --skill jev-go
+```
+
+[Rendered jev-go skill](https://github.com/Stumble/jev-go/blob/main/skills/jev-go/SKILL.md) ·
+[Raw jev-go SKILL.md](https://raw.githubusercontent.com/stumble/jev-go/refs/heads/main/skills/jev-go/SKILL.md)
+
+Or give an agent this single, self-contained Go integration guide:
 
 `https://raw.githubusercontent.com/stumble/jev-go/refs/heads/main/AGENTS.md`
 

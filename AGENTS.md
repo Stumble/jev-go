@@ -9,11 +9,51 @@ When an agent does not have this repository checked out, give it this URL:
 
 `https://raw.githubusercontent.com/stumble/jev-go/refs/heads/main/AGENTS.md`
 
+## First load TypeSafe's official skill
+
+This guide supplements, but does not replace, TypeSafe's official `typesafe-ai`
+skill. Before designing Jev questions, thresholds, or workflow composition, use
+the official skill. If installation is authorized, choose one method:
+
+```bash
+# Claude Code
+claude plugin marketplace add typesafe-ai/skills
+claude plugin install typesafe@typesafe-ai
+
+# Codex and other skill-compatible agents
+npx skills add typesafe-ai/skills --skill typesafe-ai
+```
+
+Do not install globally unless the user asks. If installation is unavailable or
+would mutate the consumer project without authorization, read the official
+skill directly:
+
+`https://raw.githubusercontent.com/typesafe-ai/skills/main/skills/typesafe-ai/SKILL.md`
+
+The official skill and live TypeSafe docs own Jev/System One concepts,
+judgment design, patterns, and current service behavior. This consumer guide
+owns only the `jev-go` adapter details. Start live documentation discovery at
+`https://docs.typesafe.ai/llms.txt` and read the relevant State, Primitives,
+Confidence, API, pattern, and cookbook pages before implementing a new workflow.
+
+An installable `jev-go` adapter skill is also available from this repository:
+
+```bash
+npx skills add Stumble/jev-go --skill jev-go
+```
+
 ## What this project is
 
 `jev-go` is a dependency-free Go SDK and interactive CLI for TypeSafe AI's Jev
 evaluation model. Jev evaluates shared state against named, typed questions and
 returns probabilities and structured judgments rather than generated prose.
+
+Jev is not a text generator or an autonomous agent. Code must retain control
+of deterministic rules, calculations, side effects, and workflow progression;
+Jev supplies narrow semantic judgments over relevant text state. Ask atomic
+questions, send independent questions together, and use a second request only
+when a previous answer is truly needed to obtain evidence or construct the
+next state/options.
 
 The SDK supports two upstream transports behind one public question/answer API:
 
@@ -416,6 +456,12 @@ the SDK in the consumer application.
   `https://github.com/Stumble/jev-go`
 - Raw agent guide:
   `https://raw.githubusercontent.com/stumble/jev-go/refs/heads/main/AGENTS.md`
+- Official TypeSafe skill documentation:
+  `https://docs.typesafe.ai/agent-skill`
+- Raw official TypeSafe skill:
+  `https://raw.githubusercontent.com/typesafe-ai/skills/main/skills/typesafe-ai/SKILL.md`
+- Raw jev-go adapter skill:
+  `https://raw.githubusercontent.com/stumble/jev-go/refs/heads/main/skills/jev-go/SKILL.md`
 - TypeSafe JavaScript SDK behavior:
   `https://docs.typesafe.ai/sdk/javascript`
 - TypeSafe HTTP API:
