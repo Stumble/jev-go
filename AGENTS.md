@@ -1,7 +1,9 @@
-# jev-go agent guide
+# jev-go consumer guide for coding agents
 
-This file is the authoritative guide for coding agents that integrate, review,
-or modify `github.com/stumble/jev-go`. It applies to the whole repository.
+This file is for coding agents integrating `github.com/stumble/jev-go` into a
+different Go application. It is a consumer integration contract, not a guide
+for contributing to the SDK repository. Do not modify or copy SDK internals
+into the consuming application unless the user explicitly asks to fork it.
 
 When an agent does not have this repository checked out, give it this URL:
 
@@ -28,7 +30,8 @@ SDK owns that translation.
 
 Follow these rules unless the user explicitly asks for different behavior:
 
-1. Import `github.com/stumble/jev-go`; do not reimplement its HTTP transport.
+1. Add and import `github.com/stumble/jev-go`; do not reimplement its HTTP
+   transport or vendor selected source files into the consumer repository.
 2. Choose the provider explicitly when using Vercel. Omitting `Provider`
    intentionally selects TypeSafe direct.
 3. Read secrets in the application or deployment layer and pass `APIKey`
@@ -367,39 +370,45 @@ representative provider response. Test at least:
 - An `APIError` path.
 - That no secret appears in logs or returned errors.
 
-The repository's opt-in live Vercel test is:
+For an explicit live smoke test, use the installed CLI rather than embedding a
+credential in a test:
 
 ```bash
-AI_GATEWAY_API_KEY=... go test -tags=integration -run TestVercelLive -v
+AI_GATEWAY_API_KEY=... go run github.com/stumble/jev-go/cmd/jev@latest \
+  -provider vercel
 ```
 
 Never add a live credential to source, fixtures, command arguments, snapshots,
 or CI configuration.
 
-## Working on this repository
+## Consumer delivery checklist
 
-Keep the root package dependency-free. New provider behavior belongs behind
-the existing `Provider` boundary; do not leak wire-specific question types into
-the public common API. Preserve Go 1.22 compatibility.
+Before reporting a `jev-go` integration complete, verify all applicable items:
 
-Before committing code changes, run:
+- `go.mod` contains `github.com/stumble/jev-go` and `go mod tidy` is clean.
+- The intended provider is explicit; Vercel integrations set
+  `ProviderVercel`, while TypeSafe direct intentionally uses the default or
+  `ProviderTypeSafe`.
+- The application reads the correct credential from its own configuration
+  layer and passes `APIKey` explicitly, or deliberately opts into
+  `ReadFromEnvironment`.
+- No key appears in source, fixtures, command arguments, logs, snapshots, or
+  error messages.
+- Every production call receives a non-nil context with an appropriate total
+  deadline.
+- `APIError` and context errors are handled without parsing strings.
+- Low-confidence and uncertain answers have an explicit review, fallback, or
+  abstention path.
+- Unit tests use `httptest.Server`, cover every question type used, and do not
+  spend money or require network access.
+- The application's normal formatter, linter, tests, race tests, and build all
+  pass.
+- If authority and a temporary credential are available, one bounded live
+  smoke test succeeds through the selected provider.
 
-```bash
-make lint-fix
-make ci
-go vet ./...
-```
-
-`make ci` enforces formatting, golangci-lint, race tests, and a minimum 85%
-total statement coverage. Current tests cover the TypeSafe and Vercel HTTP
-contracts, retries, cancellation, error decoding, response validation,
-concurrency, credential redirect protection, and CLI interaction.
-
-When changing the Vercel transport, verify the current public source contract
-in Vercel's AI SDK before editing wire types. When changing TypeSafe behavior,
-verify the current TypeSafe API and JavaScript SDK documentation. Update tests
-and this guide whenever observable configuration, request, response, retry, or
-security behavior changes.
+If a task requires changing SDK behavior rather than consuming the released
+API, stop and make that scope expansion explicit. Do not silently patch around
+the SDK in the consumer application.
 
 ## Authoritative links
 
